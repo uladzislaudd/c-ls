@@ -3,23 +3,68 @@
 #include <grp.h>
 #include <pwd.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
 
 typedef int STATUS;
 enum {
     STATUS_SUCCESS = 0x0000,
 
     STATUS_FAILURE = -0x1000,
+    STATUS_NO_MEMORY,
     STATUS_PATH_INVALID,
     STATUS_ARGS_INVALID,
 
     STATUS_DIR = -0x2000,
     STATUS_FILE,
 };
+
+#define LS_STAT_NUMBER_OF_FIELDS 6
+typedef struct ls_stat {
+    const char *n;
+    char m[16];
+    char l[8];
+    char u[16];
+    char g[16];
+    char s[16];
+    char t[16];
+} ls_stat;
+
+int ls_stat_compare(const void *ls, const void *x2)
+{
+    return strcasecmp(((struct ls_stat *)ls)->n, ((struct ls_stat *)x2)->n);
+}
+
+int ls_stat_print(struct ls_stat *s, const size_t lens[LS_STAT_NUMBER_OF_FIELDS])
+{
+    return fprintf(stdout, "%*s %*s %*s %*s %*s %*s %s\n",
+                   (int)lens[0], s->m,
+                   (int)lens[1], s->l,
+                   (int)lens[2], s->u,
+                   (int)lens[3], s->g,
+                   (int)lens[4], s->s,
+                   (int)lens[5], s->t,
+                   s->n);
+}
+
+int ls_stat_lens(struct ls_stat *s, size_t lens[LS_STAT_NUMBER_OF_FIELDS])
+{
+    size_t n;
+
+    n = strlen(s->m); if (n > lens[0]) { lens[0] = n ; }
+    n = strlen(s->l); if (n > lens[1]) { lens[1] = n ; }
+    n = strlen(s->u); if (n > lens[2]) { lens[2] = n ; }
+    n = strlen(s->g); if (n > lens[3]) { lens[3] = n ; }
+    n = strlen(s->s); if (n > lens[4]) { lens[4] = n ; }
+    n = strlen(s->t); if (n > lens[5]) { lens[5] = n ; }
+
+    return STATUS_SUCCESS;
+}
+
 
 static char *mode_str(__mode_t mode, char output[10])
 {
@@ -41,7 +86,7 @@ static char *time_str(__time_t time, char output[20])
     return output;
 }
 
-static STATUS ls_l_file(struct stat *s, const char *name)
+static STATUS ls_l_file(struct stat *s, struct ls_stat *ls)
 {
     char buf1[10], buf2[20], t = '-';
     struct passwd *u = NULL;
@@ -56,36 +101,67 @@ static STATUS ls_l_file(struct stat *s, const char *name)
     case __S_IFREG:  t = '-'; break;
     case __S_IFSOCK: t = '-'; break;
     }
-
-    fprintf(stdout, "%c%s ", t, mode_str(s->st_mode, buf1));
-    fprintf(stdout, "%lu ", s->st_nlink);
-    u = getpwuid(s->st_uid); u ? fprintf(stdout, "%s ", u->pw_name) : fprintf(stdout, "%d", s->st_uid);
-    g = getgrgid(s->st_gid); g ? fprintf(stdout, "%s ", g->gr_name) : fprintf(stdout, "%d", s->st_gid);
-    fprintf(stdout, "%ld ", s->st_size);
-    fprintf(stdout, "%s ", time_str(s->st_mtime, buf2));
-    fprintf(stdout, "%s ", name);
-    fprintf(stdout, "\n");
+    sprintf(ls->m, "%c%s", t, mode_str(s->st_mode, buf1));
+    sprintf(ls->l, "%lu", s->st_nlink);
+    u = getpwuid(s->st_uid); u ? sprintf(ls->u, "%s", u->pw_name) : sprintf(ls->u, "%d", s->st_uid);
+    g = getgrgid(s->st_gid); g ? sprintf(ls->g, "%s", g->gr_name) : sprintf(ls->g, "%d", s->st_gid);
+    sprintf(ls->s, "%ld", s->st_size);
+    sprintf(ls->t, "%s", time_str(s->st_mtime, buf2));
 
     return STATUS_SUCCESS;
 }
 
 static STATUS ls_l(DIR *dir)
 {
+    int i = 0;
+    unsigned long count = 0;
+    size_t lens[LS_STAT_NUMBER_OF_FIELDS] = { 0, 0, 0, 0, 0, 0 };
     struct stat s;
     struct dirent *di = NULL;
- 
+    struct ls_stat *lss = NULL;
+
+    while (NULL != (di = readdir(dir))) {
+        if (di->d_name[0] != '.') {
+            count++;
+        }
+    }
+
+    lss = malloc(sizeof(struct ls_stat) * count);
+    if (lss == NULL) {
+        return STATUS_NO_MEMORY;
+    }
+
+    rewinddir(dir);
     while (NULL != (di = readdir(dir))) {
         if (di->d_name[0] == '.') {
             continue;
         }
+
         if (0 != (lstat(di->d_name, &s))) {
-            break;
+            goto exit;
         }
-        if (0 != ls_l_file(&s, di->d_name)) {
-            break;
+
+        lss[i].n = di->d_name;
+        if (0 != ls_l_file(&s, &(lss[i]))) {
+            goto exit;
         }
+
+        ls_stat_lens(&(lss[i]), lens);
+
+        i++;
     }
-    
+
+    qsort(lss, count, sizeof(struct ls_stat), ls_stat_compare);
+
+    for (i = 0; i < count; i++) {
+        ls_stat_print(&(lss[i]), lens);
+    }
+
+ exit:
+    if (lss != NULL) {
+        free(lss);
+    }
+
     return errno;
 }
 
@@ -127,16 +203,26 @@ static STATUS ls_is_dir(const char *path)
     return rv;
 }
 
+
 static STATUS ls_file(const char *path)
 {
+    static const size_t lens[LS_STAT_NUMBER_OF_FIELDS] = { 0, 0, 0, 0, 0, 0 };
+
     STATUS rv = STATUS_FAILURE;
     struct stat s;
+    struct ls_stat ls;
 
     if (lstat(path, &s) != 0) {
         return errno;
     }
 
-    return ls_l_file(&s, path);
+    ls.n = path;
+    rv = ls_l_file(&s, &ls);
+    if (rv == STATUS_SUCCESS) {
+        ls_stat_print(&ls, lens);
+    }
+
+    return rv;
 }
 
 static STATUS ls(const char *path)
