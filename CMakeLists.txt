@@ -8,6 +8,13 @@ set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
 include(CPack)
 
+add_compile_options(
+    $<$<CONFIG:DEBUG>:-g>
+    $<$<CONFIG:RELEASE>:-O3>
+    $<$<CONFIG:RELEASE>:-Wall>
+    $<$<CONFIG:RELEASE>:-Werror>
+)
+
 include_directories(include)
 
 add_library(ls STATIC src/ls/ls.c src/ls/ls_stat.c src/ls/ls_status.c)

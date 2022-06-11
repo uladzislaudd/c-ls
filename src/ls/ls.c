@@ -25,11 +25,11 @@ static char *mode_str(__mode_t mode, char output[10])
 }
 
 static const char months[12][4] = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec" };
-static char *time_str(__time_t time, char output[20])
+static char *time_str(__time_t time, char output[16])
 {
     struct tm *ti = localtime(&time);
     if (ti != NULL) {
-        snprintf(output, 20, "%s %2d %.2d:%.2d", months[ti->tm_mon - 1], ti->tm_mday, ti->tm_hour, ti->tm_min);
+        snprintf(output, 16, "%s %2d %.2d:%.2d", months[ti->tm_mon - 1], ti->tm_mday, ti->tm_hour, ti->tm_min);
     }
     return output;
 }
@@ -38,7 +38,7 @@ static LS_STATUS ls_l_file(struct stat *s, struct ls_stat *ls)
 {
     LS_STATUS rv = LS_STATUS_SUCCESS;
 
-    char buf1[10], buf2[20], link[256], t = '-';
+    char buf1[10], buf2[16], link[256], t = '-';
     struct passwd *u = NULL;
     struct group *g = NULL;
     struct stat s1;
