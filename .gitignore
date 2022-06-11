@@ -52,7 +52,6 @@ Mkfile.old
 dkms.conf
 
 # Build files and directories
-ls
 .vscode
 .build
 build
