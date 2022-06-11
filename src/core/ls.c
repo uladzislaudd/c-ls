@@ -1,7 +1,9 @@
 #include <dirent.h>
 #include <errno.h>
-#include <errno.h>
+#include <grp.h>
+#include <pwd.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <stdio.h>
@@ -19,28 +21,75 @@ enum {
     STATUS_FILE,
 };
 
-static STATUS ls_l_file(const char *name)
+static char *mode_str(__mode_t mode, char output[10])
 {
+    const char chars[] = "rwxrwxrwx";
+    for (size_t i = 0; i < 9; i++) {
+        output[i] = (mode & (1 << (8-i))) ? chars[i] : '-';
+    }
+    output[9] = '\0';
+    return output;
+}
+
+static const char months[12][4] = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec" };
+static char *time_str(__time_t time, char output[20])
+{
+    struct tm *ti = localtime(&time);
+    if (ti != NULL) {
+        snprintf(output, 20, "%s %2d %.2d:%.2d", months[ti->tm_mon - 1], ti->tm_mday, ti->tm_hour, ti->tm_min);
+    }
+    return output;
+}
+
+static STATUS ls_l_file(struct stat *s, const char *name)
+{
+    char buf1[10], buf2[20], t = '-';
+    struct passwd *u = NULL;
+    struct group *g = NULL;
+
+    switch (s->st_mode & __S_IFMT) {
+    case __S_IFBLK:  t = '-'; break;
+    case __S_IFCHR:  t = 'c'; break;
+    case __S_IFDIR:  t = 'd'; break;
+    case __S_IFIFO:  t = '-'; break;
+    case __S_IFLNK:  t = 'l'; break;
+    case __S_IFREG:  t = '-'; break;
+    case __S_IFSOCK: t = '-'; break;
+    }
+
+    fprintf(stdout, "%c%s ", t, mode_str(s->st_mode, buf1));
+    fprintf(stdout, "%lu ", s->st_nlink);
+    u = getpwuid(s->st_uid); u ? fprintf(stdout, "%s ", u->pw_name) : fprintf(stdout, "%d", s->st_uid);
+    g = getgrgid(s->st_gid); g ? fprintf(stdout, "%s ", g->gr_name) : fprintf(stdout, "%d", s->st_gid);
+    fprintf(stdout, "%ld ", s->st_size);
+    fprintf(stdout, "%s ", time_str(s->st_mtime, buf2));
     fprintf(stdout, "%s ", name);
+    fprintf(stdout, "\n");
+
     return STATUS_SUCCESS;
 }
 
-static int ls_l(DIR *dir)
+static STATUS ls_l(DIR *dir)
 {
+    struct stat s;
     struct dirent *di = NULL;
+ 
     while (NULL != (di = readdir(dir))) {
         if (di->d_name[0] == '.') {
             continue;
         }
-
-        ls_l_file(di->d_name);
+        if (0 != (lstat(di->d_name, &s))) {
+            break;
+        }
+        if (0 != ls_l_file(&s, di->d_name)) {
+            break;
+        }
     }
-    fprintf(stdout, "\n");
     
     return errno;
 }
 
-static int ls_dir(const char *path)
+static STATUS ls_dir(const char *path)
 {
     int rv = STATUS_FAILURE;
     DIR *dir = NULL;
@@ -81,11 +130,13 @@ static STATUS ls_is_dir(const char *path)
 static STATUS ls_file(const char *path)
 {
     STATUS rv = STATUS_FAILURE;
-    
-    rv = ls_l_file(path);
-    fprintf(stdout, "\n");
+    struct stat s;
 
-    return rv;
+    if (lstat(path, &s) != 0) {
+        return errno;
+    }
+
+    return ls_l_file(&s, path);
 }
 
 static STATUS ls(const char *path)
