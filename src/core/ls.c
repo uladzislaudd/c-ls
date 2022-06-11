@@ -32,37 +32,35 @@ typedef struct ls_stat {
     char g[16];
     char s[16];
     char t[16];
+    char p[256];
 } ls_stat;
 
-int ls_stat_compare(const void *ls, const void *x2)
+static int ls_stat_compare(const void *ls, const void *x2)
 {
     return strcasecmp(((struct ls_stat *)ls)->n, ((struct ls_stat *)x2)->n);
 }
 
-int ls_stat_print(struct ls_stat *s, const size_t lens[LS_STAT_NUMBER_OF_FIELDS])
+static void ls_stat_print(struct ls_stat *s, const size_t lens[LS_STAT_NUMBER_OF_FIELDS])
 {
-    return fprintf(stdout, "%*s %*s %*s %*s %*s %*s %s\n",
-                   (int)lens[0], s->m,
-                   (int)lens[1], s->l,
-                   (int)lens[2], s->u,
-                   (int)lens[3], s->g,
-                   (int)lens[4], s->s,
-                   (int)lens[5], s->t,
-                   s->n);
+    fprintf(stdout, "%*s %*s %*s %*s %*s %*s %s\n",
+            (int)lens[0], s->m,
+            (int)lens[1], s->l,
+            (int)lens[2], s->u,
+            (int)lens[3], s->g,
+            (int)lens[4], s->s,
+            (int)lens[5], s->t,
+            s->p);
 }
 
-int ls_stat_lens(struct ls_stat *s, size_t lens[LS_STAT_NUMBER_OF_FIELDS])
+static void ls_stat_lens(struct ls_stat *s, size_t lens[LS_STAT_NUMBER_OF_FIELDS])
 {
     size_t n;
-
     n = strlen(s->m); if (n > lens[0]) { lens[0] = n ; }
     n = strlen(s->l); if (n > lens[1]) { lens[1] = n ; }
     n = strlen(s->u); if (n > lens[2]) { lens[2] = n ; }
     n = strlen(s->g); if (n > lens[3]) { lens[3] = n ; }
     n = strlen(s->s); if (n > lens[4]) { lens[4] = n ; }
     n = strlen(s->t); if (n > lens[5]) { lens[5] = n ; }
-
-    return STATUS_SUCCESS;
 }
 
 
@@ -88,9 +86,13 @@ static char *time_str(__time_t time, char output[20])
 
 static STATUS ls_l_file(struct stat *s, struct ls_stat *ls)
 {
-    char buf1[10], buf2[20], t = '-';
+    STATUS rv = STATUS_SUCCESS;
+
+    char buf1[10], buf2[20], link[256], t = '-';
     struct passwd *u = NULL;
     struct group *g = NULL;
+    struct stat s1;
+    struct ls_stat ls1;
 
     switch (s->st_mode & __S_IFMT) {
     case __S_IFBLK:  t = '-'; break;
@@ -101,6 +103,7 @@ static STATUS ls_l_file(struct stat *s, struct ls_stat *ls)
     case __S_IFREG:  t = '-'; break;
     case __S_IFSOCK: t = '-'; break;
     }
+
     sprintf(ls->m, "%c%s", t, mode_str(s->st_mode, buf1));
     sprintf(ls->l, "%lu", s->st_nlink);
     u = getpwuid(s->st_uid); u ? sprintf(ls->u, "%s", u->pw_name) : sprintf(ls->u, "%d", s->st_uid);
@@ -108,11 +111,47 @@ static STATUS ls_l_file(struct stat *s, struct ls_stat *ls)
     sprintf(ls->s, "%ld", s->st_size);
     sprintf(ls->t, "%s", time_str(s->st_mtime, buf2));
 
-    return STATUS_SUCCESS;
+    switch (s->st_mode & __S_IFMT) {
+    case __S_IFBLK:
+        /*  failthrough */
+    case __S_IFCHR:
+        sprintf(ls->p, "\e[1;40m\e[1;33m%s\e[0m", ls->n);
+        break;
+
+    case __S_IFDIR:
+        sprintf(ls->p, "\e[1;34m%s\e[0m", ls->n);
+        break;
+
+    case __S_IFIFO:
+        sprintf(ls->p, "\e[1;40m\e[2;31m%s\e[0m", ls->n);
+        break;
+
+    case __S_IFLNK:
+        memset(link, 0x00, sizeof(link));
+        memset(&ls1, 0x00, sizeof(ls1));
+        if (readlink(ls->n, link, sizeof(link)) == -1) { rv = errno; break; }
+        if (stat(link, &s1) != 0) { rv = errno; break; }
+        ls1.n = link;
+        rv = ls_l_file(&s1, &ls1);
+        if (rv != STATUS_SUCCESS) { break; }
+        sprintf(ls->p, "\e[1;36m%s\e[0m -> %s", ls->n, ls1.p);
+        break;
+
+    case __S_IFREG:
+        sprintf(ls->p, "\e[0m%s\e[0m", ls->n);
+        break;
+
+    case __S_IFSOCK:
+        sprintf(ls->p, "\e[1;35m%s\e[0m", ls->n);
+        break;
+    }
+
+    return rv;
 }
 
 static STATUS ls_l(DIR *dir)
 {
+    STATUS rv = STATUS_FAILURE;
     int i = 0;
     unsigned long count = 0;
     size_t lens[LS_STAT_NUMBER_OF_FIELDS] = { 0, 0, 0, 0, 0, 0 };
@@ -120,10 +159,14 @@ static STATUS ls_l(DIR *dir)
     struct dirent *di = NULL;
     struct ls_stat *lss = NULL;
 
+    errno = 0;
     while (NULL != (di = readdir(dir))) {
         if (di->d_name[0] != '.') {
             count++;
         }
+    }
+    if (errno != 0) {
+        return errno;
     }
 
     lss = malloc(sizeof(struct ls_stat) * count);
@@ -132,23 +175,31 @@ static STATUS ls_l(DIR *dir)
     }
 
     rewinddir(dir);
+    errno = 0;
     while (NULL != (di = readdir(dir))) {
         if (di->d_name[0] == '.') {
             continue;
         }
 
+        errno = 0;
         if (0 != (lstat(di->d_name, &s))) {
+            rv = errno;
             goto exit;
         }
 
         lss[i].n = di->d_name;
-        if (0 != ls_l_file(&s, &(lss[i]))) {
+        rv = ls_l_file(&s, &(lss[i]));
+        if (rv != STATUS_SUCCESS) {
             goto exit;
         }
 
         ls_stat_lens(&(lss[i]), lens);
 
         i++;
+    }
+    if (errno != 0) {
+        rv = errno;
+        goto exit;
     }
 
     qsort(lss, count, sizeof(struct ls_stat), ls_stat_compare);
@@ -162,7 +213,7 @@ static STATUS ls_l(DIR *dir)
         free(lss);
     }
 
-    return errno;
+    return rv;
 }
 
 static STATUS ls_dir(const char *path)
@@ -170,12 +221,14 @@ static STATUS ls_dir(const char *path)
     int rv = STATUS_FAILURE;
     DIR *dir = NULL;
 
+    errno = 0;
     dir = opendir(path);
     if (dir == NULL) {
-        rv = STATUS_PATH_INVALID;
+        rv = errno;
         goto exit;
     }
 
+    errno = 0;
     if (chdir(path) == 0) {
         rv = ls_l(dir);
     } else {
@@ -194,6 +247,7 @@ static STATUS ls_is_dir(const char *path)
     STATUS rv = STATUS_FAILURE;
     struct stat path_stat;
 
+    errno = 0;
     if (stat(path, &path_stat) == 0) {
         rv = S_ISDIR(path_stat.st_mode) ? STATUS_DIR : STATUS_FILE;
     } else {
@@ -212,6 +266,7 @@ static STATUS ls_file(const char *path)
     struct stat s;
     struct ls_stat ls;
 
+    errno = 0;
     if (lstat(path, &s) != 0) {
         return errno;
     }
@@ -280,7 +335,7 @@ static int ls_error(STATUS _rv)
         break;
 
     case STATUS_FAILURE:
-        fprintf(stderr, "Unknown error!");
+        fprintf(stderr, "Unknown error!\n");
         usage();
         break;
 
