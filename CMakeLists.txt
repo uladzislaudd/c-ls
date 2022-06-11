@@ -11,7 +11,7 @@ include(CPack)
 include_directories(include)
 
 add_library(ls STATIC src/ls/ls.c src/ls/ls_stat.c src/ls/ls_status.c)
-add_library(lsos STATIC src/os/posix.c)
+add_library(lsos STATIC src/os/ls_os.c src/os/ls_posix.c)
 
 add_executable(ls.bin src/core/ls.c)
 target_link_libraries(ls.bin ls lsos)

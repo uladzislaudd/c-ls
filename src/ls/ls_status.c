@@ -19,7 +19,11 @@ int ls_status_print(LS_STATUS status)
         break;
 
     case LS_STATUS_FAILURE:
-        fprintf(stderr, "Unknown error!\n");
+        fprintf(stderr, "General failure!\n");
+        break;
+
+    case LS_STATUS_SYSCALL_FAILURE:
+        fprintf(stderr, "Syscall unexepcted behavior detected!\n");
         break;
 
     case LS_STATUS_PATH_INVALID:
@@ -31,7 +35,7 @@ int ls_status_print(LS_STATUS status)
         break;
     
     default:
-        fprintf(stderr, "%s\n", strerror(status));
+        fprintf(stderr, "%s\n", status > 0 ? strerror(status) : "General failure!");
         break;
     }
 

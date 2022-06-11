@@ -52,6 +52,7 @@ static LS_STATUS ls_l_file(struct stat *s, struct ls_stat *ls)
     case __S_IFLNK:  t = 'l'; break;
     case __S_IFREG:  t = '-'; break;
     case __S_IFSOCK: t = '-'; break;
+    default: return LS_STATUS_SYSCALL_FAILURE;
     }
 
     sprintf(ls->m, "%c%s", t, mode_str(s->st_mode, buf1));
@@ -95,62 +96,48 @@ static LS_STATUS ls_l_file(struct stat *s, struct ls_stat *ls)
     case __S_IFSOCK:
         sprintf(ls->p, "\e[1;35m%s\e[0m", ls->n);
         break;
+
+    default:
+        rv = LS_STATUS_SYSCALL_FAILURE;
+        break;
     }
 
     return rv;
 }
 
-static LS_STATUS ls_l(DIR *dir)
+static LS_STATUS ls_dir_l_do(LS_OS_DIR dir, struct ls_stat *lss, size_t count)
 {
     LS_STATUS rv = LS_STATUS_FAILURE;
     int i = 0;
-    unsigned long count = 0;
+    const char *name = NULL;
     size_t lens[LS_STAT_NUMBER_OF_FIELDS] = { 0, 0, 0, 0, 0, 0 };
     struct stat s;
-    struct dirent *di = NULL;
-    struct ls_stat *lss = NULL;
+    LS_OS_DIRENT di = NULL;
 
-    errno = 0;
-    while (NULL != (di = readdir(dir))) {
-        if (di->d_name[0] != '.') {
-            count++;
-        }
-    }
-    if (errno != 0) {
-        return errno;
-    }
+    while (1) {
+        rv = ls_os_dir_read(dir, &di);
+        if (rv == LS_STATUS_DIR_END) { break; }
+        if (!LS_STATUS_OK(rv)) { return rv; }
 
-    lss = malloc(sizeof(struct ls_stat) * count);
-    if (lss == NULL) {
-        return LS_STATUS_NO_MEMORY;
-    }
-
-    rewinddir(dir);
-    errno = 0;
-    while (NULL != (di = readdir(dir))) {
-        if (di->d_name[0] == '.') {
+        name = ls_os_dirent_name(di);
+        if (name[0] == '.') {
             continue;
         }
 
         errno = 0;
-        if (0 != (lstat(di->d_name, &s))) {
-            rv = errno;
-            goto exit;
+        if (0 != (lstat(name, &s))) {
+            return errno;
         }
 
-        lss[i].n = di->d_name;
+        lss[i].n = name;
         rv = ls_l_file(&s, &(lss[i]));
-        if (rv != LS_STATUS_SUCCESS) {
-            goto exit;
+        if (!LS_STATUS_OK(rv)) {
+            return rv;
         }
 
         ls_stat_lens(&(lss[i]), lens);
 
         i++;
-    }
-    if (errno != 0) {
-        rv = errno;
-        goto exit;
     }
 
     qsort(lss, count, sizeof(struct ls_stat), ls_stat_compare);
@@ -159,7 +146,35 @@ static LS_STATUS ls_l(DIR *dir)
         ls_stat_print(&(lss[i]), lens);
     }
 
- exit:
+    return LS_STATUS_SUCCESS;
+}
+
+static LS_STATUS ls_dir_counter(LS_OS_DIRENT di, void *ctx)
+{
+    const char *name = ls_os_dirent_name(di);
+    if (di == NULL) { return LS_STATUS_FAILURE; }
+    if (name[0] != '.') { (*((size_t *)ctx))++; }
+    return LS_STATUS_SUCCESS;
+}
+
+static LS_STATUS ls_dir_l(LS_OS_DIR dir)
+{
+    LS_STATUS rv = LS_STATUS_FAILURE;
+    size_t count = 0;
+    struct ls_stat *lss = NULL;
+    
+    rv = ls_os_dir_iterate(dir, ls_dir_counter, &count);
+    if (rv != LS_STATUS_SUCCESS) {
+        return rv;
+    }
+
+    lss = malloc(sizeof(struct ls_stat) * count);
+    if (lss == NULL) {
+        return LS_STATUS_NO_MEMORY;
+    }
+
+    rv = ls_dir_l_do(dir, lss, count);
+
     if (lss != NULL) {
         free(lss);
     }
@@ -169,24 +184,18 @@ static LS_STATUS ls_l(DIR *dir)
 
 static LS_STATUS ls_dir(const char *path)
 {
-    int rv = LS_STATUS_FAILURE;
-    DIR *dir = NULL;
+    LS_STATUS rv = LS_STATUS_FAILURE;
+    LS_OS_DIR dir = NULL;
 
-    errno = 0;
-    dir = opendir(path);
-    if (dir == NULL) {
-        rv = errno;
-        goto exit;
-    }
-
-    rv = ls_os_chdir(path);
+    rv = ls_os_dir_open(path, &dir);
     if (rv == LS_STATUS_SUCCESS) {
-        rv = ls_l(dir);
+        rv = ls_os_chdir(path);
+        if (rv == LS_STATUS_SUCCESS) {
+            rv = ls_dir_l(dir);
+        }
     }
- exit:
-    if (dir != NULL) {
-        closedir(dir);
-    }
+
+    (void)closedir(dir);    /*  ingoring result because who cares   */
 
     return rv;
 }
