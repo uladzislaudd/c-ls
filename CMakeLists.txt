@@ -11,9 +11,10 @@ set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
 include(CPack)
 
 add_compile_options(
+    $<$<CONFIG:>:-Wall>
+    $<$<CONFIG:>:-Wextra>
     $<$<CONFIG:DEBUG>:-g>
     $<$<CONFIG:RELEASE>:-O3>
-    $<$<CONFIG:RELEASE>:-Wall>
     $<$<CONFIG:RELEASE>:-Werror>
 )
 
