@@ -1,6 +1,5 @@
+#include "ls_os.h"
 #include "ls_status.h"
-
-#include <errno.h>
 
 #include <string.h>
 #include <stdio.h>
@@ -35,7 +34,7 @@ int ls_status_print(LS_STATUS status)
         break;
     
     default:
-        fprintf(stderr, "%s\n", status > 0 ? strerror(status) : "General failure!");
+        rv = ls_os_status_print(status);
         break;
     }
 

@@ -16,8 +16,6 @@ enum {
     LS_STATUS_FILE,
 };
 
-#define LS_STATUS_OK(_rv_) (_rv_ == LS_STATUS_SUCCESS)
-
 int ls_status_print(LS_STATUS status);
 
 #endif // __LS_STATUS_H__

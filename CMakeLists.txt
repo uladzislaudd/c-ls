@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.0.0)
-project(c-ls VERSION 0.1.0)
+project(c-ls VERSION 0.1.0 LANGUAGES C)
+
+set(default_build_type "Debug")
 
 include(CTest)
 enable_testing()
@@ -13,6 +15,10 @@ add_compile_options(
     $<$<CONFIG:RELEASE>:-O3>
     $<$<CONFIG:RELEASE>:-Wall>
     $<$<CONFIG:RELEASE>:-Werror>
+)
+
+add_link_options(
+    $<$<CONFIG:RELEASE>:-Wl,--strip-all>
 )
 
 include_directories(include)
